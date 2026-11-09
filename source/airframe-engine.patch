@@ -1,0 +1,96 @@
+diff --git a/lib/mdnsd/mdnsd.c b/lib/mdnsd/mdnsd.c
+index 97a1ba6..2b058a0 100644
+--- a/lib/mdnsd/mdnsd.c
++++ b/lib/mdnsd/mdnsd.c
+@@ -1039,6 +1039,7 @@ int mdnsd_start(mdnsd_t *mdnsd)
+     mdns_get_default_ipv6(mdnsd->ipv6_addr, &mdnsd->ipv6_scope_id);
+ 
+     mdnsd->sock_fd4 = mdns_open_socket4(mdnsd->ipv4_addr);
++    fprintf(stderr, "AirFrame mDNS: IPv4 socket=%d address=%u error=%d\n", mdnsd->sock_fd4, mdnsd->ipv4_addr, SOCKET_GET_ERROR());
+     if (mdnsd->sock_fd4 < 0) {
+         error4 = mdnsd->sock_fd4;
+         mdnsd->sock_fd4 = -1;
+diff --git a/uxplay.cpp b/uxplay.cpp
+index 5ad4e39..704154a 100644
+--- a/uxplay.cpp
++++ b/uxplay.cpp
+@@ -78,6 +78,17 @@
+ #endif
+ 
+ 
++
++/* AirFrame integration: machine-readable events. No media is persisted. */
++static void af_text(const char *event, const char *value) {
++    if (!getenv("AIRFRAME_WINDOW")) return;
++    const char *v = value ? value : "";
++    gchar *encoded = g_base64_encode((const guchar *)v, strlen(v));
++    printf("@AF %s %s\n", event, encoded);
++    fflush(stdout);
++    g_free(encoded);
++}
++
+ #define VERSION "1.74"
+ 
+ #define SECOND_IN_USECS 1000000
+@@ -2415,6 +2426,7 @@ static int register_dnssd() {
+     }
+ 
+     dnssd_error = dnssd_register_airplay(dnssd, airplay_port);
++    if (!dnssd_error) af_text("ready", "AirPlay");
+     if (dnssd_error) {
+         if (ble_filename.empty()) {
+             LOGE("dnssd_register_airplay failed with error code %d", dnssd_error);
+@@ -2661,6 +2673,10 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
+ extern "C" int video_set_codec_and_size(void *cls, video_codec_t codec, unsigned short width_source,
+                                         unsigned short height_source, unsigned short x_offset,
+                                         unsigned short y_offset, unsigned short width, unsigned short height) {
++    if (getenv("AIRFRAME_WINDOW")) {
++        printf("@AF size %u %u\n", width, height);
++        fflush(stdout);
++    }
+     bool video_is_h265 = (codec == VIDEO_CODEC_H265);
+     if (mux_to_file) {
+         mux_renderer_choose_video_codec(video_is_h265);
+@@ -2679,6 +2695,7 @@ extern "C" int video_set_codec_and_size(void *cls, video_codec_t codec, unsigned
+ }
+ 
+ extern "C" void display_pin(void *cls, char *pin) {
++    af_text("pin", pin);
+     int margin = 10;
+     int spacing = 3;
+     char *image = create_pin_display(pin, margin, spacing);
+@@ -2764,6 +2781,9 @@ extern "C" void conn_reset (void *cls, int reason) {
+ }
+ 
+ extern "C" void report_client_request(void *cls, char *deviceid, char * model, char *name, bool * admit) {
++    af_text("device", deviceid);
++    af_text("model", model);
++    af_text("name", name);
+     LOGI("connection request from %s (%s) with deviceID = %s\n", name, model, deviceid);
+     if (restrict_clients) {
+         *admit = check_client(deviceid);
+@@ -2820,6 +2840,13 @@ extern "C" void audio_process (void *cls, raop_ntp_t *ntp, audio_decode_struct *
+ }
+ 
+ extern "C" void video_process (void *cls, raop_ntp_t *ntp, video_decode_struct *data) {
++    static gint64 af_last = 0;
++    gint64 af_now = g_get_monotonic_time();
++    if (getenv("AIRFRAME_WINDOW") && af_now - af_last > 500000) {
++        af_last = af_now;
++        printf("@AF frame\n");
++        fflush(stdout);
++    }
+     if (dump_video) {
+         dump_video_to_file(data->data, data->data_len);
+     }
+@@ -3378,6 +3405,10 @@ void real_main (int argc, char *argv[]) {
+ #else
+ int main (int argc, char *argv[]) {
+ #endif
++    const char *af_window = getenv("AIRFRAME_WINDOW");
++    if (af_window) {
++        setvbuf(stdout, NULL, _IONBF, 0);
++    }
+     std::vector<char> server_hw_addr;
+     std::string config_file = "";
+ 
